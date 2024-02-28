@@ -2,10 +2,13 @@ import os
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import wraps
 
 from pydantic import BaseModel, ValidationError
+from pydantic.main import ModelMetaclass
 
 from prowler.lib.logger import logger
+from prowler.lib.ui.live_display import live_display
 
 
 class Code(BaseModel):
@@ -57,8 +60,28 @@ class Check_Metadata_Model(BaseModel):
     Compliance: list = None
 
 
-class Check(ABC, Check_Metadata_Model):
+class CheckMeta(ModelMetaclass):
+    """
+    Dynamically decorates the execute function of all subclasses of the Check class
+
+    By making CheckMeta inherit from ModelMetaclass, it ensures that all features provided by Pydantic's BaseModel (such as data validation, serialization, and so forth) are preserved. CheckMeta just adds additional behavior (decorator application) on top of the existing features.
+    This also works because ModelMetaclass inherits from ABCMeta, as does the ABC class (its got to do with how metaclasses work when applying it to a class that inherits from other classes that have a metaclass).
+    The primary role of CheckMeta is to automatically apply a decorator to the execute method of subclasses. This behavior does not conflict with the typical responsibilities of ModelMetaclass
+    """
+
+    def __new__(cls, name, bases, dct):
+        if "execute" in dct and not getattr(
+            dct["execute"], "__isabstractmethod__", False
+        ):
+            dct["execute"] = Check.update_title_with_findings_decorator(dct["execute"])
+        return super(CheckMeta, cls).__new__(cls, name, bases, dct)
+
+
+class Check(ABC, Check_Metadata_Model, metaclass=CheckMeta):
     """Prowler Check"""
+
+    title_bar_task: int = None
+    progress_task: int = None
 
     def __init__(self, **data):
         """Check's init function. Calls the CheckMetadataModel init."""
@@ -72,6 +95,43 @@ class Check(ABC, Check_Metadata_Model):
         # Calls parents init function
         super().__init__(**data)
 
+        self.live_display_enabled = False
+        service_section = live_display.get_service_section()
+        if service_section:
+            self.live_display_enabled = True
+
+            self.title_bar_task = service_section.title_bar.add_task(
+                f"{self.CheckTitle}...", start=False
+            )
+
+    def increment_task_progress(self):
+        if self.live_display_enabled:
+            current_section = live_display.get_service_section()
+            current_section.task_progress.update(self.progress_task, advance=1)
+
+    def start_task(self, message, count):
+        if self.live_display_enabled:
+            current_section = live_display.get_service_section()
+            self.progress_task = current_section.task_progress.add_task(
+                description=message, total=count, visible=True
+            )
+
+    def update_title_with_findings(self, findings):
+        if self.live_display_enabled:
+            current_section = live_display.get_service_section()
+            # current_section.task_progress.remove_task(self.progress_task)
+            total_failed = len(
+                [report for report in findings if report.status == "FAIL"]
+            )
+            total_checked = len(findings)
+            if total_failed == 0:
+                message = f"{self.CheckTitle} [pass]All resources passed ({total_checked})[/pass]"
+            else:
+                message = f"{self.CheckTitle} [fail]{total_failed}/{total_checked} failed![/fail]"
+            current_section.title_bar.update(
+                task_id=self.title_bar_task, description=message
+            )
+
     def metadata(self) -> dict:
         """Return the JSON representation of the check's metadata"""
         return self.json()
@@ -79,6 +139,24 @@ class Check(ABC, Check_Metadata_Model):
     @abstractmethod
     def execute(self):
         """Execute the check's logic"""
+
+    @staticmethod
+    def update_title_with_findings_decorator(func):
+        """
+        Decorator to update the title bar in the live_display with findings after executing a check.
+        """
+
+        @wraps(func)
+        def wrapper(check_instance, *args, **kwargs):
+            # Execute the original check's logic
+            findings = func(check_instance, *args, **kwargs)
+
+            # Update the title bar with the findings
+            check_instance.update_title_with_findings(findings)
+
+            return findings
+
+        return wrapper
 
 
 @dataclass

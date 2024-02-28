@@ -9,26 +9,29 @@ from googleapiclient.discovery import Resource
 
 from prowler.lib.logger import logger
 from prowler.providers.gcp.gcp_provider_new import GcpProvider
+from prowler.providers.gcp.lib.audit_info.models import GCP_Audit_Info
 
 
 class GCPService:
     def __init__(
         self,
         service: str,
-        provider: GcpProvider,
+        audit_info: GCP_Audit_Info,
         region="global",
         api_version="v1",
     ):
         # We receive the service using __class__.__name__ or the service name in lowercase
         # e.g.: APIKeys --> we need a lowercase string, so service.lower()
         self.service = service.lower() if not service.islower() else service
-        self.credentials = provider.session
+        self.credentials = audit_info.credentials
         self.api_version = api_version
-        self.default_project_id = provider.default_project_id
+        self.default_project_id = audit_info.default_project_id
         self.region = region
-        self.client = self.__generate_client__(service, api_version, self.credentials)
+        self.client = self.__generate_client__(
+            self.service, api_version, audit_info.credentials
+        )
         # Only project ids that have their API enabled will be scanned
-        self.project_ids = self.__is_api_active__(provider.project_ids)
+        self.project_ids = self.__is_api_active__(audit_info.project_ids)
 
     def __get_client__(self):
         return self.client
@@ -60,7 +63,7 @@ class GCPService:
                     project_ids.append(project_id)
                 else:
                     print(
-                        f"\n{Fore.YELLOW}{self.service} API {Style.RESET_ALL}has not been used in project {project_id} before or it is disabled.\nEnable it by visiting https://console.developers.google.com/apis/api/dataproc.googleapis.com/overview?project={project_id} then retry."
+                        f"\n{Fore.YELLOW}{self.service} API {Style.RESET_ALL}has not been used in project {project_id} before or it is disabled.\nEnable it by visiting https://console.developers.google.com/apis/api/{self.service}.googleapis.com/overview?project={project_id} then retry."
                     )
             except Exception as error:
                 logger.error(

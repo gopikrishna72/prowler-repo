@@ -10,16 +10,16 @@ from pkgutil import walk_packages
 from types import ModuleType
 from typing import Any
 
-from alive_progress import alive_bar
 from colorama import Fore, Style
 
 import prowler
-from prowler.config.config import orange_color
 from prowler.lib.check.compliance_models import load_compliance_framework
 from prowler.lib.check.custom_checks_metadata import update_check_metadata
+from prowler.lib.check.managers import ExecutionManager
 from prowler.lib.check.models import Check, load_check_metadata
 from prowler.lib.logger import logger
 from prowler.lib.outputs.outputs import report
+from prowler.lib.ui.live_display import live_display
 from prowler.lib.utils.utils import open_file, parse_json_file
 from prowler.providers.aws.lib.mutelist.mutelist import mutelist_findings
 from prowler.providers.common.common import get_global_provider
@@ -108,14 +108,20 @@ def exclude_services_to_run(
 
 # Load checks from checklist.json
 def parse_checks_from_file(input_file: str, provider: str) -> set:
-    checks_to_execute = set()
-    with open_file(input_file) as f:
-        json_file = parse_json_file(f)
+    """parse_checks_from_file returns a set of checks read from the given file"""
+    try:
+        checks_to_execute = set()
+        with open_file(input_file) as f:
+            json_file = parse_json_file(f)
 
-    for check_name in json_file[provider]:
-        checks_to_execute.add(check_name)
+        for check_name in json_file[provider]:
+            checks_to_execute.add(check_name)
 
-    return checks_to_execute
+        return checks_to_execute
+    except Exception as error:
+        logger.error(
+            f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}] -- {error}"
+        )
 
 
 # Load checks from custom folder
@@ -311,7 +317,7 @@ def print_checks(
 def parse_checks_from_compliance_framework(
     compliance_frameworks: list, bulk_compliance_frameworks: dict
 ) -> list:
-    """Parse checks from compliance frameworks specification"""
+    """parse_checks_from_compliance_framework returns a set of checks from the given compliance_frameworks"""
     checks_to_execute = set()
     try:
         for framework in compliance_frameworks:
@@ -489,45 +495,55 @@ def execute_checks(
         print(
             f"{Style.BRIGHT}Executing {checks_num} {check_noun}, please wait...{Style.RESET_ALL}\n"
         )
-        with alive_bar(
-            total=len(checks_to_execute),
-            ctrl_c=False,
-            bar="blocks",
-            spinner="classic",
-            stats=False,
-            enrich_print=False,
-        ) as bar:
-            for check_name in checks_to_execute:
-                # Recover service from check name
-                service = check_name.split("_")[0]
-                bar.title = (
-                    f"-> Scanning {orange_color}{service}{Style.RESET_ALL} service"
+        execution_manager = ExecutionManager(provider, checks_to_execute)
+        total_checks = execution_manager.total_checks_per_service()
+        completed_checks = {service: 0 for service in total_checks}
+        service_findings = []
+        for service, check_name in execution_manager.execute_checks():
+            try:
+                check_findings = execute(
+                    service,
+                    check_name,
+                    provider,
+                    audit_output_options,
+                    audit_info,
+                    services_executed,
+                    checks_executed,
+                    custom_checks_metadata,
                 )
-                try:
-                    check_findings = execute(
-                        service,
-                        check_name,
-                        provider,
-                        audit_output_options,
-                        audit_info,
-                        services_executed,
-                        checks_executed,
-                        custom_checks_metadata,
-                    )
-                    all_findings.extend(check_findings)
+                all_findings.extend(check_findings)
+                service_findings.extend(check_findings)
+                # Update the completed checks count
+                completed_checks[service] += 1
 
-                # If check does not exists in the provider or is from another provider
-                except ModuleNotFoundError:
-                    logger.error(
-                        f"Check '{check_name}' was not found for the {provider.upper()} provider"
-                    )
-                except Exception as error:
-                    logger.error(
-                        f"{check_name} - {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
-                    )
-                bar()
-            bar.title = f"-> {Fore.GREEN}Scan completed!{Style.RESET_ALL}"
+                # Check if all checks for the service are completed
+                if completed_checks[service] == total_checks[service]:
+                    # All checks for the service are completed
+                    # Add a summary table or perform other actions
+                    live_display.add_results_for_service(service, service_findings)
+                    # Clear service_findings
+                    service_findings = []
+
+            # If check does not exists in the provider or is from another provider
+            except ModuleNotFoundError:
+                logger.error(
+                    f"Check '{check_name}' was not found for the {provider.upper()} provider"
+                )
+            except Exception as error:
+                logger.error(
+                    f"{check_name} - {error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
     return all_findings
+
+
+def create_check_service_dict(checks_to_execute):
+    output = {}
+    for check_name in checks_to_execute:
+        service = check_name.split("_")[0]
+        if service not in output.keys():
+            output[service] = []
+        output[service].append(check_name)
+    return output
 
 
 def execute(
@@ -611,22 +627,32 @@ def update_audit_metadata(
         )
 
 
-def recover_checks_from_service(service_list: list, provider: str) -> list:
-    checks = set()
-    service_list = [
-        "awslambda" if service == "lambda" else service for service in service_list
-    ]
-    for service in service_list:
-        modules = recover_checks_from_provider(provider, service)
-        if not modules:
-            logger.error(f"Service '{service}' does not have checks.")
+def recover_checks_from_service(service_list: list, provider: str) -> set:
+    """
+    Recover all checks from the selected provider and service
 
-        else:
-            for check_module in modules:
-                # Recover check name and module name from import path
-                # Format: "providers.{provider}.services.{service}.{check_name}.{check_name}"
-                check_name = check_module[0].split(".")[-1]
-                # If the service is present in the group list passed as parameters
-                # if service_name in group_list: checks_from_arn.add(check_name)
-                checks.add(check_name)
-    return checks
+    Returns a set of checks from the given services
+    """
+    try:
+        checks = set()
+        service_list = [
+            "awslambda" if service == "lambda" else service for service in service_list
+        ]
+        for service in service_list:
+            service_checks = recover_checks_from_provider(provider, service)
+            if not service_checks:
+                logger.error(f"Service '{service}' does not have checks.")
+
+            else:
+                for check in service_checks:
+                    # Recover check name and module name from import path
+                    # Format: "providers.{provider}.services.{service}.{check_name}.{check_name}"
+                    check_name = check[0].split(".")[-1]
+                    # If the service is present in the group list passed as parameters
+                    # if service_name in group_list: checks_from_arn.add(check_name)
+                    checks.add(check_name)
+        return checks
+    except Exception as error:
+        logger.error(
+            f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+        )

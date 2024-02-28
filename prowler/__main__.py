@@ -7,13 +7,11 @@ import sys
 from colorama import Fore, Style
 
 from prowler.config.config import get_available_compliance_frameworks
-from prowler.lib.banner import print_banner
 from prowler.lib.check.check import (
     bulk_load_checks_metadata,
     bulk_load_compliance_frameworks,
     exclude_checks_to_run,
     exclude_services_to_run,
-    execute_checks,
     list_categories,
     list_checks_json,
     list_services,
@@ -31,6 +29,7 @@ from prowler.lib.check.custom_checks_metadata import (
     parse_custom_checks_metadata_file,
     update_checks_metadata,
 )
+from prowler.lib.check.managers import ExecutionManager
 from prowler.lib.cli.parser import ProwlerArgumentParser
 from prowler.lib.logger import logger, set_logging_config
 from prowler.lib.outputs.compliance.compliance import display_compliance_table
@@ -39,6 +38,7 @@ from prowler.lib.outputs.json import close_json
 from prowler.lib.outputs.outputs import extract_findings_statistics
 from prowler.lib.outputs.slack import send_slack_message
 from prowler.lib.outputs.summary_table import display_summary_table
+from prowler.lib.ui.live_display import live_display
 from prowler.providers.aws.lib.s3.s3 import send_to_s3_bucket
 from prowler.providers.aws.lib.security_hub.security_hub import (
     batch_send_to_security_hub,
@@ -78,8 +78,10 @@ def prowler():
     compliance_framework = args.compliance
     custom_checks_metadata_file = args.custom_checks_metadata_file
 
-    if not args.no_banner:
-        print_banner(args)
+    live_display.initialize(args)
+
+    # if not args.no_banner:
+    #     print_banner(args)
 
     # We treat the compliance framework as another output format
     if compliance_framework:
@@ -196,14 +198,16 @@ def prowler():
 
     # Execute checks
     findings = []
+
     if len(checks_to_execute):
-        findings = execute_checks(
+        execution_manager = ExecutionManager(
             checks_to_execute,
             provider,
             audit_info,
             audit_output_options,
             custom_checks_metadata,
         )
+        findings = execution_manager.execute_checks()
     else:
         logger.error(
             "There are no checks to execute. Please, check your input arguments"

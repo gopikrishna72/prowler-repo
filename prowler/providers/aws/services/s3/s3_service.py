@@ -1,5 +1,4 @@
 import json
-import threading
 from typing import Optional
 
 from botocore.client import ClientError
@@ -17,25 +16,26 @@ class S3(AWSService):
         super().__init__(__class__.__name__, provider)
         self.regions_with_buckets = []
         self.buckets = self.__list_buckets__(provider)
-        self.__threading_call__(self.__get_bucket_versioning__)
-        self.__threading_call__(self.__get_bucket_logging__)
-        self.__threading_call__(self.__get_bucket_policy__)
-        self.__threading_call__(self.__get_bucket_acl__)
-        self.__threading_call__(self.__get_public_access_block__)
-        self.__threading_call__(self.__get_bucket_encryption__)
-        self.__threading_call__(self.__get_bucket_ownership_controls__)
-        self.__threading_call__(self.__get_object_lock_configuration__)
-        self.__threading_call__(self.__get_bucket_tagging__)
+        self.__threading_call__(self.__get_bucket_versioning__, self.buckets)
+        self.__threading_call__(self.__get_bucket_logging__, self.buckets)
+        self.__threading_call__(self.__get_bucket_policy__, self.buckets)
+        self.__threading_call__(self.__get_bucket_acl__, self.buckets)
+        self.__threading_call__(self.__get_public_access_block__, self.buckets)
+        self.__threading_call__(self.__get_bucket_encryption__, self.buckets)
+        self.__threading_call__(self.__get_bucket_ownership_controls__, self.buckets)
+        self.__threading_call__(self.__get_object_lock_configuration__, self.buckets)
+        self.__threading_call__(self.__get_bucket_tagging__, self.buckets)
 
     # In the S3 service we override the "__threading_call__" method because we spawn a process per bucket instead of per region
-    def __threading_call__(self, call):
-        threads = []
-        for bucket in self.buckets:
-            threads.append(threading.Thread(target=call, args=(bucket,)))
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+    # TODO: Replace the above function with the service __threading_call__ using the buckets as the iterator
+    # def __threading_call__(self, call):
+    #     threads = []
+    #     for bucket in self.buckets:
+    #         threads.append(threading.Thread(target=call, args=(bucket,)))
+    #     for t in threads:
+    #         t.start()
+    #     for t in threads:
+    #         t.join()
 
     def __list_buckets__(self, provider):
         logger.info("S3 - Listing buckets...")
@@ -101,6 +101,15 @@ class S3(AWSService):
             if "MFADelete" in bucket_versioning:
                 if "Enabled" == bucket_versioning["MFADelete"]:
                     bucket.mfa_delete = True
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "NoSuchBucket":
+                logger.warning(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
         except Exception as error:
             if bucket.region:
                 logger.error(
@@ -153,6 +162,15 @@ class S3(AWSService):
                 bucket.logging_target_bucket = bucket_logging["LoggingEnabled"][
                     "TargetBucket"
                 ]
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "NoSuchBucket":
+                logger.warning(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
         except Exception as error:
             if regional_client:
                 logger.error(
@@ -224,6 +242,15 @@ class S3(AWSService):
                     grantee.permission = grant["Permission"]
                 grantees.append(grantee)
             bucket.acl_grantees = grantees
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "NoSuchBucket":
+                logger.warning(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
         except Exception as error:
             if regional_client:
                 logger.error(
@@ -241,6 +268,15 @@ class S3(AWSService):
             bucket.policy = json.loads(
                 regional_client.get_bucket_policy(Bucket=bucket.name)["Policy"]
             )
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "NoSuchBucket":
+                logger.warning(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
+            else:
+                logger.error(
+                    f"{error.__class__.__name__}[{error.__traceback__.tb_lineno}]: {error}"
+                )
         except Exception as error:
             if "NoSuchBucketPolicy" in str(error):
                 bucket.policy = {}

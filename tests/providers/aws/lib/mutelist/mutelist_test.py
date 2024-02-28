@@ -1,5 +1,5 @@
 import yaml
-from boto3 import resource, session
+from boto3 import resource
 from mock import MagicMock
 from moto import mock_dynamodb, mock_s3
 
@@ -19,6 +19,7 @@ from tests.providers.aws.audit_info_utils import (
     AWS_ACCOUNT_NUMBER,
     AWS_REGION_EU_WEST_1,
     AWS_REGION_US_EAST_1,
+    set_mocked_aws_audit_info,
 )
 
 
