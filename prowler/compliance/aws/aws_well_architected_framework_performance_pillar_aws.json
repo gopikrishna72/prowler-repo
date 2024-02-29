@@ -1,0 +1,30 @@
+{
+  "Framework": "AWS-Well-Architected-Framework-Performance-Pillar",
+  "Version": "",
+  "Provider": "AWS",
+  "Description": "Best Practices for the AWS Well-Architected Framework Performance Efficiency Pillar encompass the ability of a workload to use computing resources efficiently and meet requirements. Performance efficiency focuses on the efficient use of cloud resources to meet requirements and avoid unnecessary costs.",
+  "Requirements": [
+    {
+      "Id": "PERF03-BP02",
+      "Description": "Optimize the use of  computing resources by selecting the right instance types and sizes for your workload. Regularly review and update your choices based on the workload's evolving requirements.",
+      "Attributes": [
+        {
+          "Name": "PERF03-BP02 Optimize instance types and sizes",
+          "WellArchitectedQuestionId": "selecting-right-instance-types",
+          "WellArchitectedPracticeId": "perf_selecting_right_instance_types",
+          "Section": "Resource optimization",
+          "SubSection": "Selecting the right instance types",
+          "LevelOfRisk": "Medium",
+          "AssessmentMethod": "Manual",
+          "Description": "Optimize the use of computing resources by selecting the right instance types and sizes for your workload. Regularly review and update your choices based on the workload's evolving requirements.",
+          "ImplementationGuidanceUrl": "https://docs.aws.amazon.com/wellarchitected/latest/performance-pillar/perf_selecting_right_instance_types.html#implementation-guidance"
+        }
+      ],
+      "Checks": [
+        "ec2_instance_type_optimized",
+        "autoscaling_group_scaling_enabled",
+        "awslambda_function_serverless_architecture"
+      ]
+    }
+  ]
+}
