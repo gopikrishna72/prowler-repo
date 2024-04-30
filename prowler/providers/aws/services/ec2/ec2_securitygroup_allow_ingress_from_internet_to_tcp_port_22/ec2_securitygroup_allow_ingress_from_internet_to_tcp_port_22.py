@@ -1,6 +1,9 @@
 from prowler.lib.check.models import Check, Check_Report_AWS
 from prowler.providers.aws.services.ec2.ec2_client import ec2_client
-from prowler.providers.aws.services.ec2.lib.security_groups import check_security_group
+from prowler.providers.aws.services.ec2.lib.security_groups import (
+    check_if_open_security_group_is_attached_to_instance,
+    check_security_group,
+)
 from prowler.providers.aws.services.vpc.vpc_client import vpc_client
 
 
@@ -9,6 +12,7 @@ class ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22(Check):
         findings = []
         check_ports = [22]
         for security_group in ec2_client.security_groups:
+            sg_is_open = False
             # Check if ignoring flag is set and if the VPC and the SG is in use
             if ec2_client.provider.scan_unused_services or (
                 security_group.vpc_id in vpc_client.vpcs
@@ -30,8 +34,30 @@ class ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22(Check):
                             ingress_rule, "tcp", check_ports, any_address=True
                         ):
                             report.status = "FAIL"
-                            report.status_extended = f"Security group {security_group.name} ({security_group.id}) has SSH port 22 open to the Internet."
+                            report.status_extended = f"Security group {security_group.name} ({security_group.id}) has SSH port 22 open to the Internet but it is not attached."
+                            report.check_metadata.Severity = "medium"
+                            sg_is_open = True
                             break
-                findings.append(report)
+                if sg_is_open:
+                    instances_attached = (
+                        check_if_open_security_group_is_attached_to_instance(
+                            security_group=security_group,
+                            vpc_client=vpc_client,
+                            port="SSH",
+                        )
+                    )
+                    if instances_attached:
+                        for instance_attached in instances_attached:
+                            report.status = "FAIL"
+                            report.check_metadata.Severity = instance_attached[
+                                "severity"
+                            ]
+                            report.status_extended = instance_attached["details"]
+                            report.resource_details = instance_attached["instance_id"]
+                            findings.append(report)
+                    else:
+                        findings.append(report)
+                else:
+                    findings.append(report)
 
         return findings
